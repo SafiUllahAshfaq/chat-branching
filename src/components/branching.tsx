@@ -176,7 +176,6 @@ export const BranchingComponent: React.FC = () => {
 		newData: Partial<MarkdownNodeDataProps>,
 		newPosition?: {x: number; y: number},
 	): void => {
-		console.log({id, newData})
 		setNodes(nds =>
 			nds.map(node =>
 				node.id === id
@@ -206,6 +205,50 @@ export const BranchingComponent: React.FC = () => {
 			},
 		}
 		setEdges(eds => [...eds, newEdge])
+	}
+
+	const handleEditSubmit = async (
+		node: NodeProps<MarkdownNodeDataProps>,
+		questionContent: string,
+	) => {
+		try {
+			setIsLoading(true)
+			// Update the current node's content
+			updateNode(node.id, {
+				content: questionContent,
+				message: {
+					...node.data.message,
+					content: questionContent,
+				},
+			})
+			// Step 1: Identify child nodes
+			const childNodes = edges
+				.filter(edge => edge.source === node.id)
+				.map(edge => edge.target)
+
+			// Step 2: Fetch new answer from ChatGPT
+			const answer = await fetchOpenAIResponse([{role: 'user', content: questionContent}])
+
+			// Step 3: Update child nodes
+			for (const childNodeId of childNodes) {
+				const childNode = nodes.find(n => n.id === childNodeId)
+				if (childNode && childNode.data.message.id) {
+					// Update the content of the child node
+					await updateMessage(childNode.data.message.id, answer, 'assistant')
+					updateNode(childNode.id, {
+						content: answer,
+						message: {
+							...childNode.data.message,
+							content: answer,
+						},
+					})
+				}
+			}
+		} catch (error) {
+			console.error('Error in handleEditSubmit:', error)
+		} finally {
+			setIsLoading(false)
+		}
 	}
 
 	const handleSubmitQuestion = async (
@@ -486,6 +529,7 @@ export const BranchingComponent: React.FC = () => {
 									onRefresh={handleNodeRefresh}
 									isSelectable={isSelectable}
 									onCheckboxChange={handleCheckboxChange} // Add this line
+									submitEdit={handleEditSubmit}
 								/>
 							),
 						}

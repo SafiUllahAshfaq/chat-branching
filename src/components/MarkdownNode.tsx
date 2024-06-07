@@ -18,6 +18,7 @@ export interface MarkdownNodeProps<T> extends NodeProps {
 	onDelete: (node: NodeProps<MarkdownNodeData<T>>) => void
 	onAddQuestion: (node: NodeProps<MarkdownNodeData<T>>) => void
 	submitQuestion: (node: NodeProps<MarkdownNodeData<T>>, questionContent: string) => void
+	submitEdit: (node: NodeProps<MarkdownNodeData<T>>, questionContent: string) => void
 	onRefresh: (node: NodeProps<MarkdownNodeData<T>>) => void
 	isSelectable: boolean
 	onCheckboxChange: (id: string, isSelected: boolean) => void
@@ -31,6 +32,7 @@ export const MarkdownNode = <T,>({
 	onRefresh,
 	isSelectable,
 	onCheckboxChange,
+	submitEdit,
 	...node
 }: MarkdownNodeProps<T>) => {
 	const {id, data} = node
@@ -53,8 +55,8 @@ export const MarkdownNode = <T,>({
 	const sxStyles = {
 		markdownNode: {
 			position: 'relative',
-			display:"flex", 
-			alignItems:"start",
+			display: 'flex',
+			alignItems: 'start',
 			padding: '12px',
 			borderRadius: '8px',
 			boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
@@ -128,9 +130,18 @@ export const MarkdownNode = <T,>({
 	const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault()
-			console.log('Enter key pressed!')
 			submitQuestion(node, question)
 			setIsTextarea(true)
+			// Add your desired action here, such as submitting the content
+		}
+	}
+
+	const handleEditKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (event.key === 'Enter' && !event.shiftKey) {
+			event.preventDefault()
+			submitEdit(node, question)
+			console.log('enter')
+			setIsEditable(false)
 			// Add your desired action here, such as submitting the content
 		}
 	}
@@ -153,7 +164,12 @@ export const MarkdownNode = <T,>({
 				<Box sx={sxStyles.contentContainer}>
 					<Box sx={sxStyles.markdownNodeContent}>
 						{isEditable ? (
-							<TextareaAutosize minRows={3} defaultValue={data.content} />
+							<TextareaAutosize
+								onKeyDown={handleEditKeyDown}
+								onChange={e => setQuestion(e.target.value)}
+								minRows={1}
+								defaultValue={data.content}
+							/>
 						) : !data.content && data.nodeType === 'question' ? (
 							<TextareaAutosize
 								onKeyDown={handleKeyDown}
