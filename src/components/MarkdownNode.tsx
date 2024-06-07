@@ -53,6 +53,8 @@ export const MarkdownNode = <T,>({
 	const sxStyles = {
 		markdownNode: {
 			position: 'relative',
+			display:"flex", 
+			alignItems:"start",
 			padding: '12px',
 			borderRadius: '8px',
 			boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
