@@ -165,11 +165,16 @@ export const MarkdownNode = <T,>({
 					</Box>
 					{isHovered && (
 						<Box sx={sxStyles.markdownNodeActions}>
-							<FiEdit onClick={() => setIsEditable(true)} />
-							<FiPlus onClick={() => onAddQuestion(node)} />
-							<FiTrash2 onClick={() => onDelete(node)} />
-							{data.nodeType !== 'question' && (
-								<FiRefreshCcw onClick={() => onRefresh(node)} />
+							{data.nodeType !== 'question' ? (
+								<>
+									<FiPlus onClick={() => onAddQuestion(node)} />
+									<FiRefreshCcw onClick={() => onRefresh(node)} />
+								</>
+							) : (
+								<>
+									<FiEdit onClick={() => setIsEditable(true)} />
+									<FiTrash2 onClick={() => onDelete(node)} />
+								</>
 							)}
 						</Box>
 					)}
