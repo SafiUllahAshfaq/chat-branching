@@ -19,16 +19,26 @@ import {
 	DialogActions,
 	DialogContent,
 	DialogTitle,
+	Snackbar,
 	TextField,
+	Typography,
 } from '@mui/material'
 import {fetchOpenAIResponse, GptMessage} from '@/utils/openai'
 import {v4 as uuidv4} from 'uuid'
 import {createConversation, getAllConversations} from '@/dbm/conversation.dbm'
-import {createMessage, deleteMessageWithChildren, getParentMessages} from '@/dbm/message.dbm'
+import {
+	createMessage,
+	deleteMessageWithChildren,
+	getParentMessages,
+	updateMessage,
+} from '@/dbm/message.dbm'
 import {Message} from '@prisma/client'
 import {MarkdownNode, MarkdownNodeData} from './MarkdownNode'
+import {FiCopy, FiPlus, FiTrash2} from 'react-icons/fi'
+import {CircularProgress} from '@mui/material'
+import {BiSelectMultiple} from 'react-icons/bi'
 
-type MarkdownNodeDataProps = MarkdownNodeData<Partial<Message> & {id: Message['id']}>
+type MarkdownNodeDataProps = MarkdownNodeData<Partial<Message>>
 type NodeWithData = Node<MarkdownNodeDataProps, 'markdownNode'>
 
 const initialNodes: NodeWithData[] = []
@@ -37,7 +47,10 @@ const initialEdges: Edge[] = []
 export const BranchingComponent: React.FC = () => {
 	const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
 	const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+	const [isLoading, setIsLoading] = useState(false)
+	const [openSnackBar, setOpenSnackBar] = useState(false)
 	const [open, setOpen] = useState(false)
+	const [isSelectable, setIsSelectable] = useState(false)
 	const [question, setQuestion] = useState('')
 	const [selectedNode, setSelectedNode] = useState<NodeWithData>()
 
@@ -54,7 +67,7 @@ export const BranchingComponent: React.FC = () => {
 					const messageNode: NodeWithData = {
 						id: `msg-${message.id}`,
 						type: 'markdownNode',
-						data: {message, content: message.content, nodeType},
+						data: {message, content: message.content, nodeType, isSelected: false},
 						position: {x: 100 * index, y: 100 + 50 * newNodes.length},
 					}
 					newNodes.push(messageNode)
@@ -82,6 +95,38 @@ export const BranchingComponent: React.FC = () => {
 		fetchData()
 	}, [setEdges, setNodes])
 
+	useEffect(() => {
+		setNodes(nds =>
+			nds.map(node => ({
+				...node,
+				data: {
+					...node.data,
+					isSelectable,
+				},
+			})),
+		)
+	}, [isSelectable])
+
+	const handleCheckboxChange = (id: string, isSelected: boolean) => {
+		setNodes(nds =>
+			nds.map(node =>
+				node.id === id
+					? {
+							...node,
+							data: {
+								...node.data,
+								isSelected,
+							},
+					  }
+					: node,
+			),
+		)
+	}
+
+	const handleCloseSnackbar = () => {
+		setOpenSnackBar(false)
+	}
+
 	const onClickCanvas = useCallback(() => {
 		setOpen(true)
 	}, [])
@@ -92,7 +137,9 @@ export const BranchingComponent: React.FC = () => {
 		setSelectedNode(undefined)
 	}, [])
 
-	const calculateNodePosition = (existingNodeId?: NodeWithData): {x: number; y: number} => {
+	const calculateNodePosition = (
+		existingNodeId?: NodeProps<MarkdownNodeDataProps>,
+	): {x: number; y: number} => {
 		if (existingNodeId) {
 			const existingNode = nodes.find(node => node.id === existingNodeId.id)
 
@@ -116,6 +163,7 @@ export const BranchingComponent: React.FC = () => {
 				message: data,
 				content: data.content,
 				nodeType: isQuestion ? 'question' : 'answer',
+				isSelected: false,
 			},
 			position,
 		}
@@ -123,7 +171,29 @@ export const BranchingComponent: React.FC = () => {
 		return newNode
 	}
 
-	const linkNodes = ({id: source}: NodeWithData, {id: target}: NodeWithData) => {
+	const updateNode = (
+		id: string,
+		newData: Partial<MarkdownNodeDataProps>,
+		newPosition?: {x: number; y: number},
+	): void => {
+		console.log({id, newData})
+		setNodes(nds =>
+			nds.map(node =>
+				node.id === id
+					? {
+							...node,
+							data: {...node.data, ...newData},
+							position: newPosition ? newPosition : node.position,
+					  }
+					: node,
+			),
+		)
+	}
+
+	const linkNodes = (
+		{id: source}: NodeProps<MarkdownNodeDataProps>,
+		{id: target}: NodeWithData,
+	) => {
 		const newEdge: Edge = {
 			id: uuidv4(),
 			source,
@@ -138,20 +208,33 @@ export const BranchingComponent: React.FC = () => {
 		setEdges(eds => [...eds, newEdge])
 	}
 
-	const handleSubmit = async () => {
+	const handleSubmitQuestion = async (
+		node: NodeProps<MarkdownNodeDataProps>,
+		questionContent: string,
+	) => {
+		setIsLoading(true)
 		try {
-			const newPosition = calculateNodePosition(selectedNode)
-			let convId = selectedNode?.data?.message?.conversationId!
+			const newPosition = calculateNodePosition(node)
+			let convId = node?.data?.message?.conversationId!
 			let messageContext: GptMessage[] = []
+
+			updateNode(node.id, {
+				...node.data,
+				content: questionContent,
+				message: {
+					...node.data.message,
+					content: questionContent,
+				},
+			})
 
 			// Create a new conversation if user clicked on the canvas
 			if (!convId) {
-				convId = (await createConversation(question)).id
+				convId = (await createConversation(questionContent)).id
 			}
 
-			const hasParent = selectedNode?.data?.message?.parentId
-			if (hasParent) {
-				messageContext = (await getParentMessages(selectedNode?.data?.message?.id))
+			const hasParent = node?.data?.message?.parentId
+			if (hasParent && node?.data?.message?.id) {
+				messageContext = (await getParentMessages(node?.data?.message?.id))
 					.reverse()
 					.map<GptMessage>(({role, content}) => ({
 						role: role as GptMessage['role'],
@@ -159,28 +242,56 @@ export const BranchingComponent: React.FC = () => {
 					}))
 			}
 
-			messageContext.push({role: 'user', content: question})
+			messageContext.push({role: 'user', content: questionContent})
 
-			// Create question message on the backend and get the answer from OpenAI
 			const [newQuestion, answer] = await Promise.all([
-				createMessage(question, 'user', convId, selectedNode?.data?.message?.id),
-				fetchOpenAIResponse(messageContext),
+				createMessage(
+					questionContent,
+					'user',
+					convId,
+					hasParent ? hasParent : node?.data?.message?.id,
+				),
+				fetchOpenAIResponse([{role: 'user', content: questionContent}]),
 			])
 
-			// Create answer message on the backend
 			const newAnswer = await createMessage(answer, 'assistant', convId, newQuestion.id)
 
-			// Update the UI with the new nodes and link them
-			const questionNode = addNode(newQuestion, newPosition, true)
 			const answerNode = addNode(newAnswer, {x: newPosition.x + 200, y: newPosition.y}, false)
 
-			if (selectedNode) {
-				linkNodes(selectedNode, questionNode)
-			}
-
-			linkNodes(questionNode, answerNode)
+			linkNodes(node, answerNode)
 		} catch (error: any) {
 			console.error(error.message, error)
+		} finally {
+			setIsLoading(false)
+		}
+
+		handleClose()
+	}
+
+	const handleNodeRefresh = async (node: NodeProps<MarkdownNodeDataProps>) => {
+		setIsLoading(true)
+		try {
+			if (node?.data?.message?.content) {
+				const [answer] = await Promise.all([
+					fetchOpenAIResponse([{role: 'user', content: node?.data?.message?.content}]),
+				])
+
+				if (node?.data?.message?.id) {
+					updateMessage(node?.data?.message?.id, answer, 'assistant')
+				}
+				updateNode(node.id, {
+					...node.data,
+					content: answer,
+					message: {
+						...node.data.message,
+						content: answer,
+					},
+				})
+			}
+		} catch (error: any) {
+			console.error(error.message, error)
+		} finally {
+			setIsLoading(false)
 		}
 
 		handleClose()
@@ -200,7 +311,9 @@ export const BranchingComponent: React.FC = () => {
 		try {
 			const nodeId = node.id
 
-			await deleteMessageWithChildren(node.data.message.id)
+			if (node?.data?.message?.id) {
+				await deleteMessageWithChildren(node?.data?.message?.id)
+			}
 
 			setNodes(currentNodes => {
 				// Set to keep track of nodes to delete, starting with the selected node
@@ -237,53 +350,192 @@ export const BranchingComponent: React.FC = () => {
 		setNodes(nds => nds.map(n => (n.id === id ? {...n, data: {...n.data, content}} : n)))
 	}
 
+	const addQuestionNode = (node?: NodeProps<MarkdownNodeDataProps>) => {
+		const newNodeID = uuidv4()
+		const position = node
+			? {x: node.xPos + 200, y: node.yPos + 100}
+			: {x: Math.random() * 400, y: Math.random() * 400} // Adjust position if no node is passed
+
+		const newNode: NodeWithData = {
+			id: newNodeID,
+			type: 'markdownNode',
+			data: {
+				content: '',
+				nodeType: 'question',
+				message: node
+					? {
+							parentId: node?.data?.message?.id,
+							conversationId: node?.data?.message?.conversationId,
+					  }
+					: {parentId: undefined, conversationId: undefined}, // Adjust data if no node is passed
+				isSelected: false,
+			},
+			position,
+		}
+
+		setNodes(nds => nds.concat(newNode))
+		if (node) {
+			setEdges(eds =>
+				eds.concat({
+					id: uuidv4(),
+					source: node.id,
+					target: newNode.id,
+					type: 'smoothstep',
+				}),
+			)
+		}
+	}
+
+	const sxStyles = {
+		globalIcons: {
+			width: '100vw',
+			position: 'absolute',
+			bottom: 10,
+			display: 'flex',
+			justifyContent: 'center',
+		},
+		btn: {
+			width: '50px',
+			color: '#000000',
+			margin: '10px',
+			backgroundColor: 'rgba(0,0,0,0.1)',
+			'&:hover': {
+				backgroundColor: 'rgba(0,0,0,0.2)',
+			},
+		},
+	}
+
+	const deleteAllNodes = async () => {
+		try {
+			// Extract all node IDs that need to be deleted from the database
+			const nodeIds = nodes
+				.map(node => node.data.message.id)
+				.filter(id => id !== undefined) as number[]
+
+			// Delete nodes from the database
+			await Promise.all(nodeIds.map(id => deleteMessageWithChildren(id)))
+
+			// Clear nodes and edges from the state
+			setNodes([])
+			setEdges([])
+			setOpen(false)
+		} catch (error: any) {
+			console.error('Error deleting nodes:', error.message, error)
+		}
+	}
+
+	const createStringFromSelectedNodes = () => {
+		const selectedNodesContent = nodes
+			.filter(node => node.data.isSelected)
+			.map(node => {
+				const nodeType = node.data.nodeType === 'question' ? 'question' : 'answer'
+				return `${nodeType}: ${node.data.content}`
+			})
+			.join('\n')
+
+		navigator.clipboard
+			.writeText(selectedNodesContent)
+			.then(() => {
+				console.log('Content copied to clipboard')
+			})
+			.catch(err => {
+				console.error('Failed to copy: ', err)
+			})
+		setOpenSnackBar(true)
+		setTimeout(() => {
+			setOpenSnackBar(false)
+		}, 3000)
+		setIsSelectable(!isSelectable)
+	}
+
 	return (
-		<Box sx={{flexGrow: 1}}>
-			<ReactFlow
-				nodes={nodes}
-				edges={edges}
-				onNodesChange={onNodesChange}
-				onEdgesChange={onEdgesChange}
-				nodeTypes={React.useMemo(() => {
-					return {
-						markdownNode: props => (
-							<MarkdownNode
-								{...props}
-								data={props.data}
-								onEdit={handleEditNode}
-								onExtend={handleExtend}
-								onDelete={handleDeleteNode}
-								// onContentChange={handleContentChange}
+		<>
+			{isLoading && (
+				<Box
+					sx={{
+						margin: -1,
+						width: '100%',
+						height: '100%',
+						position: 'absolute',
+						display: 'flex',
+						justifyContent: 'center',
+						alignItems: 'center',
+						zIndex: 1000,
+						backgroundColor: 'rgba(0,0,0,0.1)',
+					}}
+				>
+					<CircularProgress />
+				</Box>
+			)}
+			<Box sx={{flexGrow: 1}}>
+				<ReactFlow
+					nodes={nodes}
+					edges={edges}
+					onNodesChange={onNodesChange}
+					onEdgesChange={onEdgesChange}
+					nodeTypes={React.useMemo(() => {
+						return {
+							markdownNode: props => (
+								<MarkdownNode
+									{...props}
+									data={props.data}
+									onEdit={handleEditNode}
+									onAddQuestion={addQuestionNode}
+									onDelete={handleDeleteNode}
+									submitQuestion={handleSubmitQuestion}
+									onRefresh={handleNodeRefresh}
+									isSelectable={isSelectable}
+									onCheckboxChange={handleCheckboxChange} // Add this line
+								/>
+							),
+						}
+					}, [])}
+					fitView
+				>
+					<MiniMap />
+					<Controls />
+					<Background />
+				</ReactFlow>
+				<Box sx={sxStyles.globalIcons}>
+					<Button onClick={() => addQuestionNode()} sx={sxStyles.btn}>
+						<FiPlus size={24} />
+					</Button>
+					<Button onClick={() => setOpen(true)} sx={sxStyles.btn}>
+						<FiTrash2 size={24} />
+					</Button>
+					{isSelectable ? (
+						<Button onClick={createStringFromSelectedNodes} sx={sxStyles.btn}>
+							<FiCopy size={24} />
+						</Button>
+					) : (
+						<Button sx={sxStyles.btn}>
+							<BiSelectMultiple
+								onClick={() => setIsSelectable(!isSelectable)}
+								size={24}
 							/>
-						),
-					}
-				}, [])}
-				fitView
-			>
-				<MiniMap />
-				<Controls />
-				<Background />
-			</ReactFlow>
-			<Dialog open={open} onClose={handleClose}>
-				<DialogTitle>
-					{selectedNode ? 'Type a question' : 'Start a new conversation'}
-				</DialogTitle>
-				<DialogContent>
-					<TextField
-						autoFocus
-						margin="dense"
-						label="Enter your question"
-						type="text"
-						fullWidth
-						value={question}
-						onChange={e => setQuestion(e.target.value)}
-					/>
-				</DialogContent>
-				<DialogActions>
-					<Button onClick={handleClose}>Cancel</Button>
-					<Button onClick={handleSubmit}>Submit</Button>
-				</DialogActions>
-			</Dialog>
-		</Box>
+						</Button>
+					)}
+				</Box>
+				<Dialog open={open} onClose={handleClose}>
+					<DialogTitle>Delete record</DialogTitle>
+					<DialogContent>
+						<Typography variant="body1" paragraph>
+							Are you sure you want to delete all nodes?
+						</Typography>
+					</DialogContent>
+					<DialogActions>
+						<Button onClick={handleClose}>Cancel</Button>
+						<Button onClick={deleteAllNodes}>Delete</Button>
+					</DialogActions>
+				</Dialog>
+				<Snackbar
+					anchorOrigin={{vertical: 'top', horizontal: 'center'}}
+					open={openSnackBar}
+					onClose={handleCloseSnackbar}
+					message="Text copied to clipboard"
+					key={'top' + 'center'}
+				/>
+			</Box>
+		</>
 	)
 }
